@@ -68,7 +68,7 @@ public:
     static constexpr int defaultFocusLineFontSize = 14;
     static constexpr int minimumFocusLineFontSize = 9;
     static constexpr int maximumFocusLineFontSize = 40;
-    static constexpr int defaultFocusWordThreshold = 50;
+    static constexpr int defaultFocusWordThreshold = 25;
     static QStringList selectableFontFamilies(const QStringList &families);
     static int countWords(const QString &text);
     static QString normalizedLinkUrl(const QString &clipboardText);

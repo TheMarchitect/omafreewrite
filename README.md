@@ -12,14 +12,14 @@ two never interfere.
 
 ## Focus mode
 
-- Once you have typed 50 new words, the window fades to black, goes fullscreen,
+- Once you have typed 25 new words, the window fades to black, goes fullscreen,
   and a single dim line fades in showing the tail of what you are writing. New
   text pushes the old off to the left like a ticker.
 - The count is of words written, not words in the file, so opening a long
   document never triggers it. Deleting words lowers the count.
 - Letters, space, Enter and Backspace work. Arrow keys, Home, End, Page keys and
   the mouse do nothing. Forward only.
-- `Escape` releases it. The counter re-arms from there, so the next 50 words
+- `Escape` releases it. The counter re-arms from there, so the next 25 words
   bring it back.
 - `Ctrl+Shift+F` toggles it by hand at any time.
 - `Ctrl+=` and `Ctrl+-` change the line's text size while in the mode, and the
@@ -33,7 +33,7 @@ Three settings live in `~/.config/Omacom/omafreewrite.conf` under `[focus]`:
 ```ini
 [focus]
 lineFontSize=14   ; pixels, 9 to 40
-wordThreshold=50  ; new words before the blackout
+wordThreshold=25  ; new words before the blackout
 autoEnter=true    ; false leaves only the Ctrl+Shift+F toggle
 ```
 
