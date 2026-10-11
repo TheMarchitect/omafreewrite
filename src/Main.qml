@@ -1201,8 +1201,11 @@ ApplicationWindow {
             property real lineOffset: 0
             width: win.focusLineWidth
             height: focusLineText.height
-            anchors.centerIn: parent
-            anchors.verticalCenterOffset: Math.round(lineOffset)
+            // Pinned near the top, out of the eye's resting spot in the
+            // middle of the screen.
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: Math.round(parent.height * 0.08) + Math.round(lineOffset)
             opacity: 0
             clip: true
 
