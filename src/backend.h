@@ -31,6 +31,9 @@ class Backend : public QObject {
     Q_PROPERTY(QString themeSelection READ themeSelection NOTIFY themeColorsChanged)
     Q_PROPERTY(QString editorFont READ editorFont WRITE setEditorFont NOTIFY editorFontChanged)
     Q_PROPERTY(QStringList availableFonts READ availableFonts CONSTANT)
+    Q_PROPERTY(int focusLineFontSize READ focusLineFontSize WRITE setFocusLineFontSize NOTIFY focusLineFontSizeChanged)
+    Q_PROPERTY(int focusWordThreshold READ focusWordThreshold CONSTANT)
+    Q_PROPERTY(bool focusAutoEnter READ focusAutoEnter CONSTANT)
 
 public:
     explicit Backend(QObject *parent = nullptr);
@@ -56,6 +59,16 @@ public:
     void setEditorFont(const QString &family);
     QStringList availableFonts() const;
     static QString defaultEditorFont();
+    // Focus mode: the single-line, blacked-out writing view.
+    int focusLineFontSize() const { return m_focusLineFontSize; }
+    void setFocusLineFontSize(int pixels);
+    int focusWordThreshold() const { return m_focusWordThreshold; }
+    bool focusAutoEnter() const { return m_focusAutoEnter; }
+    static int clampFocusLineFontSize(int pixels);
+    static constexpr int defaultFocusLineFontSize = 14;
+    static constexpr int minimumFocusLineFontSize = 9;
+    static constexpr int maximumFocusLineFontSize = 40;
+    static constexpr int defaultFocusWordThreshold = 50;
     static QStringList selectableFontFamilies(const QStringList &families);
     static int countWords(const QString &text);
     static QString normalizedLinkUrl(const QString &clipboardText);
@@ -93,6 +106,8 @@ signals:
     void textScaleChanged();
     void themeColorsChanged();
     void editorFontChanged();
+    void focusLineFontSizeChanged();
+    void documentLoaded();
     void closeAfterSave();
     void openDialogRequested();
     void saveDialogRequested(const QUrl &suggestedUrl);
@@ -150,5 +165,8 @@ private:
     QString m_themeAccent;
     QString m_themeSelection;
     QString m_editorFont;
+    int m_focusLineFontSize = defaultFocusLineFontSize;
+    int m_focusWordThreshold = defaultFocusWordThreshold;
+    bool m_focusAutoEnter = true;
     QFileSystemWatcher m_themeWatcher;
 };

@@ -37,6 +37,9 @@
 constexpr qreal typoraLineHeightPercent = 140;
 const QString lastSaveDirectorySetting = QStringLiteral("file/lastSaveDirectory");
 const QString editorFontSetting = QStringLiteral("editor/font");
+const QString focusLineFontSizeSetting = QStringLiteral("focus/lineFontSize");
+const QString focusWordThresholdSetting = QStringLiteral("focus/wordThreshold");
+const QString focusAutoEnterSetting = QStringLiteral("focus/autoEnter");
 
 // Noto ships a separate family per script, which buries every other font in
 // the picker. Offer only the core Latin families; the rest still serve as
@@ -96,6 +99,15 @@ Backend::Backend(QObject *parent) : QObject(parent) {
     m_editorFont = !savedFont.isEmpty() && QFontDatabase::hasFamily(savedFont)
         ? savedFont
         : defaultEditorFont();
+
+    {
+        QSettings settings;
+        m_focusLineFontSize = clampFocusLineFontSize(
+            settings.value(focusLineFontSizeSetting, defaultFocusLineFontSize).toInt());
+        m_focusWordThreshold = qMax(1,
+            settings.value(focusWordThresholdSetting, defaultFocusWordThreshold).toInt());
+        m_focusAutoEnter = settings.value(focusAutoEnterSetting, true).toBool();
+    }
 
     const QString stateDirectory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(stateDirectory);
@@ -460,6 +472,20 @@ void Backend::setEditorFont(const QString &family) {
     emit editorFontChanged();
 }
 
+int Backend::clampFocusLineFontSize(int pixels) {
+    return qBound(minimumFocusLineFontSize, pixels, maximumFocusLineFontSize);
+}
+
+void Backend::setFocusLineFontSize(int pixels) {
+    const int clamped = clampFocusLineFontSize(pixels);
+    if (clamped == m_focusLineFontSize)
+        return;
+
+    m_focusLineFontSize = clamped;
+    QSettings().setValue(focusLineFontSizeSetting, clamped);
+    emit focusLineFontSizeChanged();
+}
+
 QStringList Backend::availableFonts() const {
     // Leave out icon, emoji, and other symbol fonts, along with anything that
     // cannot set the Latin text the editor is written in.
@@ -514,6 +540,7 @@ void Backend::loadDocumentText(const QString &text) {
     applyDocumentTypography();
     m_wordCountTimer.stop();
     setWordCount(countWords(text));
+    emit documentLoaded();
 }
 
 void Backend::setFileUrl(const QUrl &url) {

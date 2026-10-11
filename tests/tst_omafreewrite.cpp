@@ -8,7 +8,7 @@
 #include "backend.h"
 #include "markdownhighlighter.h"
 
-class OmawriteTest : public QObject {
+class OmaFreewriteTest : public QObject {
     Q_OBJECT
 
 private slots:
@@ -81,6 +81,98 @@ private slots:
         QSettings().setValue(QStringLiteral("editor/font"), QStringLiteral("No Such Font"));
         QCOMPARE(Backend().editorFont(), Backend::defaultEditorFont());
         QSettings().remove(QStringLiteral("editor/font"));
+    }
+
+    void remembersFocusLineFontSize() {
+        {
+            Backend backend;
+            QCOMPARE(backend.focusLineFontSize(), Backend::defaultFocusLineFontSize);
+            QCOMPARE(backend.focusWordThreshold(), Backend::defaultFocusWordThreshold);
+            QVERIFY(backend.focusAutoEnter());
+            QSignalSpy sizeSpy(&backend, &Backend::focusLineFontSizeChanged);
+            backend.setFocusLineFontSize(18);
+            QCOMPARE(sizeSpy.count(), 1);
+            // Out-of-range sizes clamp instead of vanishing or exploding.
+            backend.setFocusLineFontSize(1000);
+            QCOMPARE(backend.focusLineFontSize(), Backend::maximumFocusLineFontSize);
+            backend.setFocusLineFontSize(1);
+            QCOMPARE(backend.focusLineFontSize(), Backend::minimumFocusLineFontSize);
+            backend.setFocusLineFontSize(18);
+        }
+
+        QCOMPARE(Backend().focusLineFontSize(), 18);
+
+        QSettings settings;
+        settings.setValue(QStringLiteral("focus/wordThreshold"), 5);
+        settings.setValue(QStringLiteral("focus/autoEnter"), false);
+        settings.sync();
+        QCOMPARE(Backend().focusWordThreshold(), 5);
+        QVERIFY(!Backend().focusAutoEnter());
+        settings.remove(QStringLiteral("focus"));
+        settings.sync();
+    }
+
+    void focusModeArmsOnTypedWordsOnly() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        QTemporaryDir documents;
+        QVERIFY(documents.isValid());
+        const QString longPath = documents.filePath(QStringLiteral("long.md"));
+        {
+            QFile file(longPath);
+            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+            file.write(QStringLiteral("word ").repeated(400).toUtf8());
+        }
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        QObject *line = window->findChild<QObject *>(QStringLiteral("focusLineText"));
+        QVERIFY(line);
+        QVERIFY(!window->property("focusMode").toBool());
+
+        // Opening a long document is reading, not writing: no blackout.
+        backend.open(QUrl::fromLocalFile(longPath));
+        QCOMPARE(backend.wordCount(), 400);
+        QTest::qWait(300);
+        QVERIFY(!window->property("focusMode").toBool());
+
+        // Writing fewer than the threshold's worth of words leaves it alone.
+        const QString fewWords = QStringLiteral("alpha ").repeated(Backend::defaultFocusWordThreshold - 1);
+        editor->setProperty("text", editor->property("text").toString() + fewWords);
+        QTRY_COMPARE(backend.wordCount(), 400 + Backend::defaultFocusWordThreshold - 1);
+        QTest::qWait(50);
+        QVERIFY(!window->property("focusMode").toBool());
+
+        // The threshold word tips it over, and the line shows the tail.
+        editor->setProperty("text", editor->property("text").toString() + QStringLiteral("omega\nlast"));
+        editor->setProperty("cursorPosition", editor->property("text").toString().length());
+        QTRY_VERIFY(window->property("focusMode").toBool());
+        const QString shown = line->property("text").toString();
+        QVERIFY2(shown.endsWith(QStringLiteral("omega  \u00b7  last")), qPrintable(shown));
+        QVERIFY(!shown.contains(QLatin1Char('\n')));
+
+        // Releasing it re-arms the counter from the current word count.
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "exitFocus"));
+        QVERIFY(!window->property("focusMode").toBool());
+        editor->setProperty("text", editor->property("text").toString() + QStringLiteral(" more words here"));
+        QTRY_COMPARE(backend.wordCount(), 400 + Backend::defaultFocusWordThreshold + 4);
+        QTest::qWait(50);
+        QVERIFY(!window->property("focusMode").toBool());
+
+        // The manual toggle always works.
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "toggleFocus"));
+        QVERIFY(window->property("focusMode").toBool());
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "leaveFocusNow"));
+        QVERIFY(!window->property("focusMode").toBool());
     }
 
     void findsInlineMarkdownRanges() {
@@ -289,5 +381,5 @@ private:
     QTemporaryDir m_settingsDirectory;
 };
 
-QTEST_MAIN(OmawriteTest)
-#include "tst_omawrite.moc"
+QTEST_MAIN(OmaFreewriteTest)
+#include "tst_omafreewrite.moc"

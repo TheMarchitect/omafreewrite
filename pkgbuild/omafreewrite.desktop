@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=OmaFreewrite
+GenericName=Focused Writer
+Comment=Focused Markdown writing with a Freewrite-style blackout
+Exec=omafreewrite %f
+Icon=omafreewrite
+Terminal=false
+Categories=Office;WordProcessor;TextEditor;
+MimeType=text/markdown;text/x-markdown;text/plain;
+Keywords=markdown;write;notes;text;editor;freewrite;focus;
+StartupWMClass=omafreewrite

@@ -13,7 +13,7 @@ ApplicationWindow {
     minimumWidth: 720
     minimumHeight: 520
     visible: true
-    title: (backend.modified ? "* " : "") + backend.fileName + " - Omawrite"
+    title: (backend.modified ? "* " : "") + backend.fileName + " - OmaFreewrite"
 
     readonly property bool darkMode: backend.darkMode
     readonly property color pageColor: backend.themeBackground
@@ -39,12 +39,24 @@ ApplicationWindow {
     property string pendingAction: ""
     property bool replaceOpen: false
     property bool awaitingPendingSave: false
+    // Focus mode blacks the window out to a single line of trailing text,
+    // Freewrite style. It arms itself after focusWordThreshold words typed
+    // since the document was loaded or since the mode was last released.
+    property bool focusMode: false
+    property bool focusTransitioning: false
+    property int focusBaseline: 0
+    property int focusPreviousVisibility: Window.Windowed
+    readonly property int focusLineWidth: Math.round(width * 0.45)
+    readonly property int focusLinePixelSize: scaledSize(backend.focusLineFontSize)
+    readonly property color focusTextColor: "#8e8e85"
 
     Material.theme: darkMode ? Material.Dark : Material.Light
     Material.accent: backend.themeAccent
     color: pageColor
 
     onClosing: function(close) {
+        if (focusMode || focusTransitioning)
+            leaveFocusNow();
         if (closeConfirmed || !backend.modified)
             return;
 
@@ -90,6 +102,69 @@ ApplicationWindow {
         win.visibility = win.visibility === Window.FullScreen
             ? Window.Windowed
             : Window.FullScreen;
+    }
+
+    // Entering and leaving interrupt each other, so a toggle pressed during
+    // the fade is never swallowed.
+    function enterFocus() {
+        if (focusMode)
+            return;
+        closeSearch();
+        if (fontPicker.opened)
+            fontPicker.close();
+        focusPreviousVisibility = win.visibility;
+        focusMode = true;
+        focusTransitioning = true;
+        editor.forceActiveFocus();
+        focusExitAnimation.stop();
+        focusEnterAnimation.start();
+    }
+
+    function exitFocus() {
+        if (!focusMode)
+            return;
+        focusMode = false;
+        focusTransitioning = true;
+        focusBaseline = backend.wordCount;
+        focusEnterAnimation.stop();
+        focusExitAnimation.start();
+    }
+
+    function toggleFocus() {
+        if (focusMode)
+            exitFocus();
+        else
+            enterFocus();
+    }
+
+    // Undo the fullscreen step of entering focus mode, if it happened.
+    function restoreFocusVisibility() {
+        if (win.visibility !== Window.FullScreen || focusPreviousVisibility === Window.FullScreen)
+            return;
+        win.visibility = focusPreviousVisibility === Window.Maximized
+            ? Window.Maximized
+            : Window.Windowed;
+    }
+
+    // Drop out of focus mode with no transition, for closing the window.
+    function leaveFocusNow() {
+        focusEnterAnimation.stop();
+        focusExitAnimation.stop();
+        focusMode = false;
+        focusTransitioning = false;
+        focusBaseline = backend.wordCount;
+        restoreFocusVisibility();
+        focusOverlay.opacity = 0;
+        focusLine.opacity = 0;
+    }
+
+    function maybeEnterFocus() {
+        if (!backend.focusAutoEnter || focusMode || focusTransitioning || searchOpen)
+            return;
+        if (unsavedChangesDialog.opened || externalChangeDialog.opened || shortcutsDialog.opened)
+            return;
+        if (backend.wordCount - focusBaseline >= backend.focusWordThreshold)
+            enterFocus();
     }
 
     function updateSearch() {
@@ -147,6 +222,7 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+H"
         context: Qt.ApplicationShortcut
+        enabled: !win.focusMode
         onActivated: {
             searchOpen = true;
             replaceOpen = true;
@@ -176,36 +252,42 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+?"
         context: Qt.ApplicationShortcut
+        enabled: !win.focusMode
         onActivated: shortcutsDialog.open()
     }
 
     Shortcut {
         sequence: "Ctrl+O"
         context: Qt.ApplicationShortcut
+        enabled: !win.focusMode
         onActivated: backend.openDialog()
     }
 
     Shortcut {
         sequence: "Ctrl+N"
         context: Qt.ApplicationShortcut
+        enabled: !win.focusMode
         onActivated: backend.newWindow()
     }
 
     Shortcut {
         sequence: "Ctrl+Shift+S"
         context: Qt.ApplicationShortcut
+        enabled: !win.focusMode
         onActivated: backend.saveAsDialog()
     }
 
     Shortcut {
         sequence: "Ctrl+P"
         context: Qt.ApplicationShortcut
+        enabled: !win.focusMode
         onActivated: backend.printDocument()
     }
 
     Shortcut {
         sequences: ["Meta+F", "F11"]
         context: Qt.ApplicationShortcut
+        enabled: !win.focusMode
         onActivated: toggleFullScreen()
     }
 
@@ -224,11 +306,39 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+F"
         context: Qt.ApplicationShortcut
+        enabled: !win.focusMode
         onActivated: {
             searchOpen = true;
             searchField.forceActiveFocus();
             searchField.selectAll();
         }
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+F"
+        context: Qt.ApplicationShortcut
+        onActivated: toggleFocus()
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        context: Qt.ApplicationShortcut
+        enabled: win.focusMode
+        onActivated: exitFocus()
+    }
+
+    Shortcut {
+        sequences: ["Ctrl+=", "Ctrl++"]
+        context: Qt.ApplicationShortcut
+        enabled: win.focusMode
+        onActivated: backend.focusLineFontSize = backend.focusLineFontSize + 1
+    }
+
+    Shortcut {
+        sequence: "Ctrl+-"
+        context: Qt.ApplicationShortcut
+        enabled: win.focusMode
+        onActivated: backend.focusLineFontSize = backend.focusLineFontSize - 1
     }
 
     Shortcut {
@@ -259,6 +369,16 @@ ApplicationWindow {
             win.awaitingPendingSave = false;
             if (win.pendingAction !== "")
                 win.completePendingAction();
+        }
+
+        function onDocumentLoaded() {
+            // Opening a long document is not writing it.
+            win.focusBaseline = backend.wordCount;
+        }
+
+        function onWordCountChanged() {
+            // Deferred so a load's documentLoaded lands first.
+            Qt.callLater(win.maybeEnterFocus);
         }
 
         function onExternalChangeDetected(deleted, locallyModified) {
@@ -332,7 +452,7 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         anchors.centerIn: parent
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nF11 / Super+F  Fullscreen\nCtrl+Shift+F  Focus Mode\nEsc  Leave Focus Mode\nCtrl+= / Ctrl+-  Focus Line Size\nCtrl+?  Shortcuts"
             lineHeight: 1.5
         }
     }
@@ -736,6 +856,27 @@ ApplicationWindow {
 
                 Keys.priority: Keys.BeforeItem
                 Keys.onPressed: function(event) {
+                    if (win.focusMode) {
+                        if (event.key === Qt.Key_Escape) {
+                            win.exitFocus();
+                            event.accepted = true;
+                            return;
+                        }
+                        // Forward only: no wandering back through the text.
+                        switch (event.key) {
+                        case Qt.Key_Left:
+                        case Qt.Key_Right:
+                        case Qt.Key_Up:
+                        case Qt.Key_Down:
+                        case Qt.Key_Home:
+                        case Qt.Key_End:
+                        case Qt.Key_PageUp:
+                        case Qt.Key_PageDown:
+                            event.accepted = true;
+                            return;
+                        }
+                    }
+
                     var pasteKey = (event.key === Qt.Key_V)
                         && (event.modifiers & Qt.ControlModifier)
                         && !(event.modifiers & (Qt.AltModifier | Qt.MetaModifier | Qt.ShiftModifier));
@@ -1031,6 +1172,123 @@ ApplicationWindow {
         }
     }
 
+    // Focus mode: the whole window goes black except one line of the text
+    // just written, trailing the cursor like a ticker.
+    Rectangle {
+        id: focusOverlay
+        objectName: "focusOverlay"
+        anchors.fill: parent
+        z: 50
+        color: "black"
+        opacity: 0
+        visible: opacity > 0
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            hoverEnabled: true
+            cursorShape: Qt.BlankCursor
+            onWheel: function(wheel) { wheel.accepted = true; }
+            onPressed: function(mouse) {
+                mouse.accepted = true;
+                editor.forceActiveFocus();
+            }
+        }
+
+        Item {
+            id: focusLine
+            objectName: "focusLine"
+            property real lineOffset: 0
+            width: win.focusLineWidth
+            height: focusLineText.height
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: Math.round(lineOffset)
+            opacity: 0
+            clip: true
+
+            Text {
+                id: focusLineText
+                objectName: "focusLineText"
+                // Grow from the left until the line fills, then pin the
+                // newest text to the right edge so it scrolls like a ticker.
+                x: Math.min(0, focusLine.width - width - focusCursor.width - 2)
+                text: {
+                    var end = editor.cursorPosition;
+                    var tail = editor.text.slice(Math.max(0, end - 600), end);
+                    return tail.replace(/[ \t]*\n+[ \t]*/g, "  \u00b7  ");
+                }
+                textFormat: Text.PlainText
+                wrapMode: Text.NoWrap
+                maximumLineCount: 1
+                color: win.focusTextColor
+                font.family: backend.editorFont
+                font.pixelSize: win.focusLinePixelSize
+                renderType: Screen.devicePixelRatio % 1 === 0 ? Text.NativeRendering : Text.QtRendering
+            }
+
+            Rectangle {
+                id: focusCursor
+                x: focusLineText.x + focusLineText.width + 2
+                anchors.verticalCenter: focusLineText.verticalCenter
+                width: 1
+                height: Math.round(focusLineText.height * 0.8)
+                color: win.focusTextColor
+                opacity: 0.55
+            }
+        }
+    }
+
+    SequentialAnimation {
+        id: focusEnterAnimation
+        // Fade to black first so the compositor's jump to fullscreen happens
+        // on an already black window and is not seen.
+        NumberAnimation {
+            target: focusOverlay; property: "opacity"; to: 1
+            duration: 500; easing.type: Easing.InOutQuad
+        }
+        ScriptAction {
+            script: if (win.focusMode) win.visibility = Window.FullScreen
+        }
+        PauseAnimation { duration: 220 }
+        ParallelAnimation {
+            NumberAnimation {
+                target: focusLine; property: "opacity"; to: 1
+                duration: 550; easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                target: focusLine; property: "lineOffset"; from: 16; to: 0
+                duration: 550; easing.type: Easing.OutCubic
+            }
+        }
+        ScriptAction { script: win.focusTransitioning = false }
+    }
+
+    SequentialAnimation {
+        id: focusExitAnimation
+        ParallelAnimation {
+            NumberAnimation {
+                target: focusLine; property: "opacity"; to: 0
+                duration: 260; easing.type: Easing.InQuad
+            }
+            NumberAnimation {
+                target: focusLine; property: "lineOffset"; to: 10
+                duration: 260; easing.type: Easing.InQuad
+            }
+        }
+        ScriptAction { script: win.restoreFocusVisibility() }
+        PauseAnimation { duration: 220 }
+        NumberAnimation {
+            target: focusOverlay; property: "opacity"; to: 0
+            duration: 500; easing.type: Easing.InOutQuad
+        }
+        ScriptAction {
+            script: {
+                win.focusTransitioning = false;
+                editor.forceActiveFocus();
+            }
+        }
+    }
+
     Component.onCompleted: {
         var geometry = backend.windowGeometry();
         if (geometry.x >= 0) x = geometry.x;
@@ -1038,6 +1296,7 @@ ApplicationWindow {
         width = geometry.width;
         height = geometry.height;
         if (geometry.maximized) showMaximized();
+        focusBaseline = backend.wordCount;
     }
 
     Component.onDestruction: backend.saveWindowGeometry(x, y, width, height, visibility === Window.Maximized)
