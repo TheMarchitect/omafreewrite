@@ -46,7 +46,7 @@ ApplicationWindow {
     property bool focusTransitioning: false
     property int focusBaseline: 0
     property int focusPreviousVisibility: Window.Windowed
-    readonly property int focusLineWidth: Math.round(width * 0.45)
+    readonly property int focusLineWidth: Math.round(width * 0.22)
     readonly property int focusLinePixelSize: scaledSize(backend.focusLineFontSize)
     readonly property color focusTextColor: "#8e8e85"
 
