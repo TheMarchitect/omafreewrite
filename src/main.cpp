@@ -11,6 +11,7 @@
 #include <QFile>
 
 #include "backend.h"
+#include "polish.h"
 #include "systemtheme.h"
 
 int main(int argc, char *argv[]) {
@@ -29,6 +30,7 @@ int main(int argc, char *argv[]) {
     QQuickStyle::setStyle(QStringLiteral("Material"));
 
     Backend backend(&app);
+    Polish polish(&app);
     SystemTheme systemTheme(&app);
     backend.setDarkMode(systemTheme.darkMode());
     QObject::connect(&systemTheme, &SystemTheme::darkModeChanged, &backend,
@@ -61,6 +63,7 @@ int main(int argc, char *argv[]) {
             qWarning().noquote() << warning.toString();
     });
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("polish"), &polish);
 
     engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
     if (engine.rootObjects().isEmpty()) {

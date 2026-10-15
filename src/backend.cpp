@@ -568,6 +568,32 @@ void Backend::setStatus(const QString &status) {
     emit statusChanged();
 }
 
+void Backend::showStatus(const QString &status) {
+    setStatus(status);
+}
+
+bool Backend::replaceTextIfUnchanged(int start, int end, const QString &expected,
+                                     const QString &replacement) {
+    if (!m_document || start < 0 || end < start)
+        return false;
+    QTextCursor cursor(m_document);
+    cursor.setPosition(std::min(start, m_document->characterCount() - 1));
+    cursor.setPosition(std::min(end, m_document->characterCount() - 1), QTextCursor::KeepAnchor);
+    // QTextDocument stores paragraph breaks as U+2029; compare as plain text.
+    QString current = cursor.selectedText();
+    current.replace(QChar::ParagraphSeparator, QLatin1Char('\n'));
+    current.replace(QChar::LineSeparator, QLatin1Char('\n'));
+    if (current != expected)
+        return false;
+    if (replacement == expected)
+        return true;
+
+    cursor.beginEditBlock();
+    cursor.insertText(replacement);
+    cursor.endEditBlock();
+    return true;
+}
+
 void Backend::saveTo(const QUrl &url) {
     if (!url.isLocalFile()) {
         m_closeAfterSave = false;

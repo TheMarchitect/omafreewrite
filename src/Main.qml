@@ -49,6 +49,11 @@ ApplicationWindow {
     readonly property int focusLineWidth: Math.round(width * 0.22)
     readonly property int focusLinePixelSize: scaledSize(backend.focusLineFontSize)
     readonly property color focusTextColor: "#8e8e85"
+    // Polish: when Escape releases focus mode, the span written since the
+    // counter last re-armed goes out for a spelling and paragraph pass.
+    property int focusBaselinePosition: 0
+    property int focusStartPosition: 0
+    property bool dialogRestoresFullScreen: false
 
     Material.theme: darkMode ? Material.Dark : Material.Light
     Material.accent: backend.themeAccent
@@ -112,7 +117,15 @@ ApplicationWindow {
         closeSearch();
         if (fontPicker.opened)
             fontPicker.close();
+        if (polishSettings.opened)
+            polishSettings.close();
         focusPreviousVisibility = win.visibility;
+        // The session's text starts where the counter last re-armed, as long
+        // as the cursor only moved forward from there.
+        focusStartPosition = focusBaselinePosition >= 0
+                && focusBaselinePosition <= editor.cursorPosition
+            ? focusBaselinePosition
+            : editor.cursorPosition;
         focusMode = true;
         focusTransitioning = true;
         editor.forceActiveFocus();
@@ -120,14 +133,57 @@ ApplicationWindow {
         focusEnterAnimation.start();
     }
 
-    function exitFocus() {
+    function exitFocus(skipPolish) {
         if (!focusMode)
             return;
+        var start = focusStartPosition;
+        var end = editor.cursorPosition;
         focusMode = false;
         focusTransitioning = true;
-        focusBaseline = backend.wordCount;
+        rearmFocus();
         focusEnterAnimation.stop();
         focusExitAnimation.start();
+        if (!skipPolish)
+            requestPolish(start, end);
+    }
+
+    function rearmFocus() {
+        focusBaseline = backend.wordCount;
+        focusBaselinePosition = editor.cursorPosition;
+    }
+
+    function requestPolish(start, end) {
+        if (!polish.enabled)
+            return;
+        start = Math.max(0, Math.min(start, editor.text.length));
+        end = Math.max(start, Math.min(end, editor.text.length));
+        if (end === start)
+            return;
+        polish.request(editor.text.substring(start, end), start, end);
+    }
+
+    // File dialogs come from the desktop portal as separate windows, which a
+    // fullscreen blackout would hide: drop the mode and fullscreen first.
+    function prepareForDialog() {
+        if (focusMode || focusTransitioning) {
+            var wasFocus = focusMode;
+            var start = focusStartPosition;
+            var end = editor.cursorPosition;
+            leaveFocusNow();
+            if (wasFocus)
+                requestPolish(start, end);
+        }
+        if (win.visibility === Window.FullScreen) {
+            dialogRestoresFullScreen = true;
+            win.visibility = Window.Windowed;
+        }
+    }
+
+    function finishDialog() {
+        if (!dialogRestoresFullScreen)
+            return;
+        dialogRestoresFullScreen = false;
+        win.visibility = Window.FullScreen;
     }
 
     function toggleFocus() {
@@ -152,7 +208,7 @@ ApplicationWindow {
         focusExitAnimation.stop();
         focusMode = false;
         focusTransitioning = false;
-        focusBaseline = backend.wordCount;
+        rearmFocus();
         restoreFocusVisibility();
         focusOverlay.opacity = 0;
         focusLine.opacity = 0;
@@ -324,7 +380,21 @@ ApplicationWindow {
         sequence: "Escape"
         context: Qt.ApplicationShortcut
         enabled: win.focusMode
-        onActivated: exitFocus()
+        onActivated: exitFocus(false)
+    }
+
+    Shortcut {
+        sequence: "Shift+Escape"
+        context: Qt.ApplicationShortcut
+        enabled: win.focusMode
+        onActivated: exitFocus(true)
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+P"
+        context: Qt.ApplicationShortcut
+        enabled: !win.focusMode
+        onActivated: polishSettings.opened ? polishSettings.close() : polishSettings.open()
     }
 
     Shortcut {
@@ -352,10 +422,12 @@ ApplicationWindow {
         target: backend
 
         function onOpenDialogRequested() {
+            win.prepareForDialog();
             openFileDialog.open();
         }
 
         function onSaveDialogRequested(suggestedUrl) {
+            win.prepareForDialog();
             saveFileDialog.selectedFile = suggestedUrl;
             saveFileDialog.open();
         }
@@ -373,7 +445,7 @@ ApplicationWindow {
 
         function onDocumentLoaded() {
             // Opening a long document is not writing it.
-            win.focusBaseline = backend.wordCount;
+            win.rearmFocus();
         }
 
         function onWordCountChanged() {
@@ -393,7 +465,11 @@ ApplicationWindow {
         title: "Open File"
         fileMode: Dialogs.FileDialog.OpenFile
         nameFilters: ["Markdown files (*.md *.markdown)", "All files (*)"]
-        onAccepted: win.requestOpen(selectedFile)
+        onAccepted: {
+            win.finishDialog();
+            win.requestOpen(selectedFile);
+        }
+        onRejected: win.finishDialog()
     }
 
     Dialogs.FileDialog {
@@ -401,11 +477,34 @@ ApplicationWindow {
         title: "Save File"
         fileMode: Dialogs.FileDialog.SaveFile
         nameFilters: ["Markdown files (*.md *.markdown)", "All files (*)"]
-        onAccepted: backend.saveAs(selectedFile)
+        onAccepted: {
+            win.finishDialog();
+            backend.saveAs(selectedFile);
+        }
         onRejected: {
+            win.finishDialog();
             backend.fileDialogCanceled();
             win.awaitingPendingSave = false;
             win.pendingAction = "";
+        }
+    }
+
+    Connections {
+        target: polish
+
+        function onStarted(start, end) {
+            backend.showStatus("Polishing\u2026");
+        }
+
+        function onFinished(start, end, original, polished) {
+            if (backend.replaceTextIfUnchanged(start, end, original, polished))
+                backend.showStatus("Polished");
+            else
+                backend.showStatus("Polish skipped: the text moved on");
+        }
+
+        function onFailed(reason) {
+            backend.showStatus("Polish failed: " + reason);
         }
     }
 
@@ -452,7 +551,7 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         anchors.centerIn: parent
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nF11 / Super+F  Fullscreen\nCtrl+Shift+F  Focus Mode\nEsc  Leave Focus Mode\nCtrl+= / Ctrl+-  Focus Line Size\nCtrl+?  Shortcuts"
+            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nF11 / Super+F  Fullscreen\nCtrl+Shift+F  Focus Mode\nEsc  Leave Focus Mode and Polish\nShift+Esc  Leave Focus Mode, no Polish\nCtrl+Shift+P  Polish Settings\nCtrl+= / Ctrl+-  Focus Line Size\nCtrl+?  Shortcuts"
             lineHeight: 1.5
         }
     }
@@ -858,7 +957,7 @@ ApplicationWindow {
                 Keys.onPressed: function(event) {
                     if (win.focusMode) {
                         if (event.key === Qt.Key_Escape) {
-                            win.exitFocus();
+                            win.exitFocus((event.modifiers & Qt.ShiftModifier) !== 0);
                             event.accepted = true;
                             return;
                         }
@@ -974,6 +1073,15 @@ ApplicationWindow {
                 onClicked: fontPicker.opened ? fontPicker.close() : fontPicker.open()
             }
 
+            FooterIconButton {
+                id: polishButton
+                objectName: "polishButton"
+                iconName: "polish"
+                iconColor: polish.busy ? backend.themeAccent : win.mutedColor
+                tooltip: "Polish"
+                onClicked: polishSettings.opened ? polishSettings.close() : polishSettings.open()
+            }
+
             Label {
                 text: backend.status
                 color: win.mutedColor
@@ -985,6 +1093,19 @@ ApplicationWindow {
                 height: win.scaledSize(16)
                 verticalAlignment: Text.AlignVCenter
             }
+        }
+
+        PolishSettings {
+            id: polishSettings
+            objectName: "polishSettings"
+            x: footerStatus.x + polishButton.x - 8
+            y: footerStatus.y - height - 10
+            width: win.scaledSize(380)
+            darkMode: win.darkMode
+            textScale: win.textScale
+            textColor: win.textColor
+            mutedColor: win.mutedColor
+            highlightColor: backend.themeAccent
         }
 
         FontPicker {

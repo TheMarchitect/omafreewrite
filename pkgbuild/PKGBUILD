@@ -1,7 +1,7 @@
 # Maintainer: Russell Lundstrom <russell@marketingplanformula.com>
 
 pkgname=omafreewrite
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='Focused Markdown writing app: the screen goes black down to one line while you write'
 arch=('x86_64')

@@ -96,6 +96,11 @@ public:
     Q_INVOKABLE QVariantMap windowGeometry() const;
     Q_INVOKABLE void saveWindowGeometry(int x, int y, int width, int height, bool maximized);
     Q_INVOKABLE void documentFontChanged();
+    // Polish hands its result back here: the span is replaced in one undo
+    // step, and only if it still reads exactly as it did when it was sent.
+    Q_INVOKABLE bool replaceTextIfUnchanged(int start, int end, const QString &expected,
+                                            const QString &replacement);
+    Q_INVOKABLE void showStatus(const QString &status);
 
 signals:
     void fileUrlChanged();

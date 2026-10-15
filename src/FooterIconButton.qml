@@ -54,6 +54,25 @@ Item {
                 context.lineTo(4.5, 9.5);
                 context.lineTo(11.5, 9.5);
                 context.lineTo(11.5, 13.5);
+            } else if (control.iconName === "polish") {
+                context.moveTo(7, 2.5);
+                context.lineTo(8.3, 6.7);
+                context.lineTo(12.5, 8);
+                context.lineTo(8.3, 9.3);
+                context.lineTo(7, 13.5);
+                context.lineTo(5.7, 9.3);
+                context.lineTo(1.5, 8);
+                context.lineTo(5.7, 6.7);
+                context.closePath();
+                context.moveTo(12.5, 2);
+                context.lineTo(13, 3.5);
+                context.lineTo(14.5, 4);
+                context.lineTo(13, 4.5);
+                context.lineTo(12.5, 6);
+                context.lineTo(12, 4.5);
+                context.lineTo(10.5, 4);
+                context.lineTo(12, 3.5);
+                context.closePath();
             } else if (control.iconName === "font") {
                 context.moveTo(3, 13.5);
                 context.lineTo(8, 2.5);

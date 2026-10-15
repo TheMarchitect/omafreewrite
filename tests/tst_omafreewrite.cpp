@@ -7,6 +7,11 @@
 
 #include "backend.h"
 #include "markdownhighlighter.h"
+#include "polish.h"
+
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTextDocument>
 
 class OmaFreewriteTest : public QObject {
     Q_OBJECT
@@ -126,8 +131,10 @@ private slots:
         }
 
         Backend backend;
+        Polish polish;
         QQmlEngine engine;
         engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        engine.rootContext()->setContextProperty(QStringLiteral("polish"), &polish);
         QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
         QVERIFY2(component.isReady(), qPrintable(component.errorString()));
         QScopedPointer<QObject> window(component.create());
@@ -161,7 +168,7 @@ private slots:
         QVERIFY(!shown.contains(QLatin1Char('\n')));
 
         // Releasing it re-arms the counter from the current word count.
-        QVERIFY(QMetaObject::invokeMethod(window.data(), "exitFocus"));
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "exitFocus", Q_ARG(QVariant, true)));
         QVERIFY(!window->property("focusMode").toBool());
         editor->setProperty("text", editor->property("text").toString() + QStringLiteral(" more words here"));
         QTRY_COMPARE(backend.wordCount(), 400 + Backend::defaultFocusWordThreshold + 4);
@@ -173,6 +180,366 @@ private slots:
         QVERIFY(window->property("focusMode").toBool());
         QVERIFY(QMetaObject::invokeMethod(window.data(), "leaveFocusNow"));
         QVERIFY(!window->property("focusMode").toBool());
+    }
+
+    void polishPromptForbidsWordChanges() {
+        const QString prompt = Polish::systemPrompt();
+        QVERIFY(prompt.contains(QStringLiteral("never add words")));
+        QVERIFY(prompt.contains(QStringLiteral("never delete words")));
+        QVERIFY(prompt.contains(QStringLiteral("never more than two sentences")));
+        QVERIFY(!prompt.contains(QStringLiteral("voice"), Qt::CaseInsensitive));
+    }
+
+    void polishCleansModelReplies() {
+        // Fences and curly quotes go; the whitespace framing the span stays.
+        const QString original = QStringLiteral("  dont do it\n");
+        QCOMPARE(Polish::cleanReply(QStringLiteral("```\nDon’t do it.\n```"), original),
+                 QStringLiteral("  Don't do it.\n"));
+        QCOMPARE(Polish::cleanReply(QStringLiteral("“Hi,” she said.  \n  \n\n\nBye."),
+                                    QStringLiteral("hi she said bye")),
+                 QStringLiteral("\"Hi,\" she said.\n\nBye."));
+        // A writer who types curly quotes keeps them.
+        QCOMPARE(Polish::cleanReply(QStringLiteral("It’s"), QStringLiteral("it’s")),
+                 QStringLiteral("It’s"));
+    }
+
+    void polishCapsParagraphsAtTwoSentences() {
+        const QString five = QStringLiteral(
+            "One is here. Two is here! Three is here? Four e.g. stays. Five is here.");
+        QCOMPARE(Polish::capParagraphs(five),
+                 QStringLiteral("One is here. Two is here!\n\nThree is here? Four e.g. stays.\n\nFive is here."));
+        // Existing short paragraphs and trailing newlines are untouched.
+        const QString shaped = QStringLiteral("One. Two.\n\nThree.\n");
+        QCOMPARE(Polish::capParagraphs(shaped), shaped);
+        // Markdown blocks are never re-flowed.
+        const QString list = QStringLiteral("# Title. Here.\n\n- one. two. three.\n- four.\n\n> quoted. text. here.");
+        QCOMPARE(Polish::capParagraphs(list), list);
+        // Quotes and brackets closing a sentence belong to it.
+        QCOMPARE(Polish::capParagraphs(QStringLiteral("He said \"go.\" (Really.) Then left. Done.")),
+                 QStringLiteral("He said \"go.\" (Really.)\n\nThen left. Done."));
+    }
+
+    void polishRejectsRewrites() {
+        const QString original = QStringLiteral(
+            "so i was thinkign about teh launch and we dont actully know who the first ten customers are. "
+            "we have a list, sure, but a list isnt the same as ten people who will pay");
+        const QString spelled = QStringLiteral(
+            "So I was thinking about the launch and we don't actually know who the first ten customers are.\n\n"
+            "We have a list, sure, but a list isn't the same as ten people who will pay.");
+        QVERIFY(Polish::preservesWords(original, spelled));
+        // "alot" style splits and joins are fine.
+        QVERIFY(Polish::preservesWords(QStringLiteral("i like it alot and every thing is ok here today"),
+                                       QStringLiteral("I like it a lot and everything is ok here today.")));
+        // A rewrite, a summary, an answer and a truncation are not.
+        QVERIFY(!Polish::preservesWords(original, QStringLiteral(
+            "I have been reflecting on the launch, and we do not truly know our first ten customers. "
+            "A list exists, but it is not the same as ten committed buyers.")));
+        QVERIFY(!Polish::preservesWords(original, QStringLiteral("The writer worries about finding ten paying customers.")));
+        QVERIFY(!Polish::preservesWords(original, QStringLiteral(
+            "So I was thinking about the launch and we don't actually know who the first ten customers are.")));
+        QVERIFY(!Polish::preservesWords(original, spelled + QStringLiteral(
+            " Here is some advice: call them this week and ask each one directly whether they will pay.")));
+        QVERIFY(!Polish::preservesWords(original, QString()));
+    }
+
+    void polishBuildsProviderRequests() {
+        QCOMPARE(Polish::providerFor(QStringLiteral("http://127.0.0.1:11434")), QStringLiteral("openai"));
+        QCOMPARE(Polish::providerFor(QStringLiteral("https://api.openai.com/v1")), QStringLiteral("openai"));
+        QCOMPARE(Polish::providerFor(QStringLiteral("https://api.anthropic.com")), QStringLiteral("anthropic"));
+        QCOMPARE(Polish::endpointUrl(QStringLiteral("http://127.0.0.1:11434/"), QStringLiteral("chat/completions")),
+                 QStringLiteral("http://127.0.0.1:11434/v1/chat/completions"));
+        QCOMPARE(Polish::endpointUrl(QStringLiteral("https://api.openai.com/v1"), QStringLiteral("models")),
+                 QStringLiteral("https://api.openai.com/v1/models"));
+
+        const QJsonObject openai = Polish::requestBody(QStringLiteral("openai"), QStringLiteral("gemma3:4b"),
+                                                       QStringLiteral("teh text"));
+        QCOMPARE(openai.value(QStringLiteral("model")).toString(), QStringLiteral("gemma3:4b"));
+        QCOMPARE(openai.value(QStringLiteral("temperature")).toInt(), 0);
+        QCOMPARE(openai.value(QStringLiteral("messages")).toArray().size(), 2);
+        QCOMPARE(openai.value(QStringLiteral("messages")).toArray().last().toObject()
+                     .value(QStringLiteral("content")).toString(), QStringLiteral("teh text"));
+
+        const QJsonObject anthropic = Polish::requestBody(QStringLiteral("anthropic"),
+                                                          QStringLiteral("claude-haiku-5-5"),
+                                                          QStringLiteral("teh text"));
+        QCOMPARE(anthropic.value(QStringLiteral("system")).toString(), Polish::systemPrompt());
+        QVERIFY(anthropic.value(QStringLiteral("max_tokens")).toInt() >= 4096);
+        QVERIFY(!anthropic.contains(QStringLiteral("temperature")));
+        QCOMPARE(anthropic.value(QStringLiteral("messages")).toArray().size(), 1);
+
+        QSettings().setValue(QStringLiteral("polish/baseUrl"), QStringLiteral("https://api.anthropic.com"));
+        QSettings().setValue(QStringLiteral("polish/apiKey"), QStringLiteral("sk-test"));
+        {
+            Polish polish;
+            const QNetworkRequest request = polish.networkRequest(QStringLiteral("messages"));
+            QCOMPARE(request.url().toString(), QStringLiteral("https://api.anthropic.com/v1/messages"));
+            QCOMPARE(request.rawHeader("x-api-key"), QByteArray("sk-test"));
+            QCOMPARE(request.rawHeader("anthropic-version"), QByteArray("2023-06-01"));
+            QVERIFY(!request.hasRawHeader("Authorization"));
+        }
+        QSettings().setValue(QStringLiteral("polish/baseUrl"), QStringLiteral("https://api.groq.com/openai/v1/"));
+        {
+            Polish polish;
+            const QNetworkRequest request = polish.networkRequest(QStringLiteral("chat/completions"));
+            QCOMPARE(request.url().toString(), QStringLiteral("https://api.groq.com/openai/v1/chat/completions"));
+            QCOMPARE(request.rawHeader("Authorization"), QByteArray("Bearer sk-test"));
+            QVERIFY(!request.hasRawHeader("x-api-key"));
+        }
+        QSettings().remove(QStringLiteral("polish"));
+
+        QString error;
+        QCOMPARE(Polish::replyText(QByteArray("{\"choices\":[{\"message\":{\"content\":\"Fixed.\"}}]}"),
+                                   QStringLiteral("openai"), &error), QStringLiteral("Fixed."));
+        QCOMPARE(Polish::replyText(QByteArray("{\"content\":[{\"type\":\"text\",\"text\":\"Fixed.\"}],\"stop_reason\":\"end_turn\"}"),
+                                   QStringLiteral("anthropic"), &error), QStringLiteral("Fixed."));
+        QVERIFY(Polish::replyText(QByteArray("{\"error\":{\"message\":\"model not found\"}}"),
+                                  QStringLiteral("openai"), &error).isEmpty());
+        QCOMPARE(error, QStringLiteral("model not found"));
+        QCOMPARE(Polish::modelNames(QByteArray("{\"data\":[{\"id\":\"qwen3:4b\"},{\"id\":\"gemma3:4b\"}]}")),
+                 QStringList({QStringLiteral("gemma3:4b"), QStringLiteral("qwen3:4b")}));
+    }
+
+    void polishRemembersSettings() {
+        QSettings().remove(QStringLiteral("polish"));
+        {
+            Polish polish;
+            QVERIFY(polish.enabled());
+            QCOMPARE(polish.baseUrl(), Polish::defaultBaseUrl());
+            QCOMPARE(polish.model(), Polish::defaultModel());
+            QVERIFY(polish.apiKey().isEmpty());
+            polish.setEnabled(false);
+            polish.setBaseUrl(QStringLiteral("http://localhost:8080/// "));
+            polish.setModel(QStringLiteral(" llama3.2:3b "));
+            polish.setModel(QString());
+            polish.setApiKey(QStringLiteral("key"));
+        }
+        Polish polish;
+        QVERIFY(!polish.enabled());
+        QCOMPARE(polish.baseUrl(), QStringLiteral("http://localhost:8080"));
+        QCOMPARE(polish.model(), QStringLiteral("llama3.2:3b"));
+        QCOMPARE(polish.apiKey(), QStringLiteral("key"));
+        QSettings().remove(QStringLiteral("polish"));
+    }
+
+    // A one-connection stand-in for an OpenAI-style server.
+    static QTcpServer *fakeChatServer(QObject *parent, const QByteArray &reply, QByteArray *requestOut) {
+        auto *server = new QTcpServer(parent);
+        QObject::connect(server, &QTcpServer::newConnection, server, [server, reply, requestOut]() {
+            QTcpSocket *socket = server->nextPendingConnection();
+            QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, reply, requestOut]() {
+                requestOut->append(socket->readAll());
+                const int headerEnd = requestOut->indexOf("\r\n\r\n");
+                if (headerEnd < 0)
+                    return;
+                const QByteArray header = requestOut->left(headerEnd).toLower();
+                const int lengthAt = header.indexOf("content-length:");
+                const int length = lengthAt < 0 ? 0
+                    : header.mid(lengthAt + 15, header.indexOf("\r\n", lengthAt) - lengthAt - 15).trimmed().toInt();
+                if (requestOut->size() < headerEnd + 4 + length)
+                    return;
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                              + QByteArray::number(reply.size()) + "\r\nConnection: close\r\n\r\n" + reply);
+                socket->disconnectFromHost();
+            });
+        });
+        return server;
+    }
+
+    void polishRoundTripsThroughAServer() {
+        const QString original = QStringLiteral("so teh launch is tomorow and i am not ready. nobody is ever ready i guess");
+        const QString fixed = QStringLiteral(
+            "So the launch is tomorrow and I am not ready. Nobody is ever ready I guess.");
+        const QByteArray reply = QJsonDocument(QJsonObject{
+            {QStringLiteral("choices"), QJsonArray{QJsonObject{
+                {QStringLiteral("message"), QJsonObject{{QStringLiteral("content"), fixed}}}}}}})
+            .toJson(QJsonDocument::Compact);
+
+        QByteArray request;
+        QTcpServer *server = fakeChatServer(this, reply, &request);
+        QVERIFY(server->listen(QHostAddress::LocalHost));
+        QSettings().setValue(QStringLiteral("polish/baseUrl"),
+                             QStringLiteral("http://127.0.0.1:%1").arg(server->serverPort()));
+
+        Polish polish;
+        QSignalSpy startedSpy(&polish, &Polish::started);
+        QSignalSpy finishedSpy(&polish, &Polish::finished);
+        QSignalSpy failedSpy(&polish, &Polish::failed);
+
+        // Too short to bother the model.
+        polish.request(QStringLiteral("hi"), 0, 2);
+        QCOMPARE(startedSpy.count(), 0);
+
+        polish.request(original, 10, 10 + original.size());
+        QCOMPARE(startedSpy.count(), 1);
+        QVERIFY(polish.busy());
+        QTRY_COMPARE(finishedSpy.count(), 1);
+        QVERIFY(!polish.busy());
+        QCOMPARE(failedSpy.count(), 0);
+        QVERIFY2(request.startsWith("POST /v1/chat/completions"), request.constData());
+        QVERIFY(request.contains("gemma3:4b"));
+
+        const QList<QVariant> result = finishedSpy.takeFirst();
+        QCOMPARE(result.at(0).toInt(), 10);
+        QCOMPARE(result.at(1).toInt(), 10 + original.size());
+        QCOMPARE(result.at(2).toString(), original);
+        QCOMPARE(result.at(3).toString(), QStringLiteral(
+            "So the launch is tomorrow and I am not ready. Nobody is ever ready I guess."));
+
+        // The same reply as a rewrite is refused.
+        server->close();
+        QTcpServer *rewriter = fakeChatServer(this, QJsonDocument(QJsonObject{
+            {QStringLiteral("choices"), QJsonArray{QJsonObject{
+                {QStringLiteral("message"), QJsonObject{{QStringLiteral("content"),
+                    QStringLiteral("Tomorrow we launch, and I feel unprepared. Perhaps nobody ever feels prepared.")}}}}}}})
+            .toJson(QJsonDocument::Compact), &request);
+        QVERIFY(rewriter->listen(QHostAddress::LocalHost));
+        polish.setBaseUrl(QStringLiteral("http://127.0.0.1:%1").arg(rewriter->serverPort()));
+        polish.request(original, 0, original.size());
+        QTRY_COMPARE(failedSpy.count(), 1);
+        QVERIFY2(failedSpy.first().first().toString().contains(QStringLiteral("changed the words")),
+                 qPrintable(failedSpy.first().first().toString()));
+        QCOMPARE(finishedSpy.count(), 0);
+
+        // No server at all fails fast with a readable reason.
+        rewriter->close();
+        polish.request(original, 0, original.size());
+        QTRY_COMPARE(failedSpy.count(), 2);
+        QVERIFY(failedSpy.last().first().toString().contains(QStringLiteral("no server")));
+        QSettings().remove(QStringLiteral("polish"));
+    }
+
+    void polishReplacesTheSpanInOneUndoStep() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        Polish polish;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        engine.rootContext()->setContextProperty(QStringLiteral("polish"), &polish);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+
+        const QString before = QStringLiteral("# Notes\n\nkept as is. ");
+        const QString session = QStringLiteral("teh new words\nmore here");
+        editor->setProperty("text", before + session);
+        const int start = before.size();
+        const int end = before.size() + session.size();
+
+        // A span that moved on is left alone.
+        QVERIFY(!backend.replaceTextIfUnchanged(start, end, QStringLiteral("something else"),
+                                                QStringLiteral("x")));
+        QCOMPARE(editor->property("text").toString(), before + session);
+
+        QVERIFY(backend.replaceTextIfUnchanged(start, end, session,
+                                               QStringLiteral("The new words.\n\nMore here.")));
+        QCOMPARE(editor->property("text").toString(),
+                 QStringLiteral("# Notes\n\nkept as is. The new words.\n\nMore here."));
+        QVERIFY(backend.modified());
+
+        QVERIFY(QMetaObject::invokeMethod(editor, "undo"));
+        QCOMPARE(editor->property("text").toString(), before + session);
+    }
+
+    void escapeFromFocusModeSendsTheSessionToPolish() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        // Point Polish at a closed port so requests fail quickly and quietly.
+        QTcpServer closed;
+        QVERIFY(closed.listen(QHostAddress::LocalHost));
+        const quint16 port = closed.serverPort();
+        closed.close();
+        QSettings().setValue(QStringLiteral("polish/baseUrl"), QStringLiteral("http://127.0.0.1:%1").arg(port));
+
+        Backend backend;
+        Polish polish;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        engine.rootContext()->setContextProperty(QStringLiteral("polish"), &polish);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        QSignalSpy startedSpy(&polish, &Polish::started);
+        QSignalSpy failedSpy(&polish, &Polish::failed);
+
+        // Words typed after the counter armed are the session.
+        const QString opening = QStringLiteral("# Heading\n\n");
+        editor->setProperty("text", opening);
+        editor->setProperty("cursorPosition", opening.size());
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "rearmFocus"));
+        const QString typed = QStringLiteral("alpha ").repeated(Backend::defaultFocusWordThreshold) + QStringLiteral("omega");
+        editor->setProperty("text", opening + typed);
+        editor->setProperty("cursorPosition", (opening + typed).size());
+        QTRY_VERIFY(window->property("focusMode").toBool());
+        QCOMPARE(window->property("focusStartPosition").toInt(), opening.size());
+
+        // Shift+Escape leaves without a pass.
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "exitFocus", Q_ARG(QVariant, true)));
+        QVERIFY(!window->property("focusMode").toBool());
+        QCOMPARE(startedSpy.count(), 0);
+
+        // Escape sends exactly the session span.
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "toggleFocus"));
+        QVERIFY(window->property("focusMode").toBool());
+        const QString more = QStringLiteral(" and then a few more words");
+        editor->setProperty("text", opening + typed + more);
+        editor->setProperty("cursorPosition", (opening + typed + more).size());
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "exitFocus", Q_ARG(QVariant, false)));
+        QCOMPARE(startedSpy.count(), 1);
+        QCOMPARE(startedSpy.first().at(0).toInt(), (opening + typed).size());
+        QCOMPARE(startedSpy.first().at(1).toInt(), (opening + typed + more).size());
+        QTRY_COMPARE(failedSpy.count(), 1);
+        QVERIFY(backend.status().startsWith(QStringLiteral("Polish failed")));
+
+        // Switched off, Escape just leaves.
+        polish.setEnabled(false);
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "toggleFocus"));
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "exitFocus", Q_ARG(QVariant, false)));
+        QCOMPARE(startedSpy.count(), 1);
+        QSettings().remove(QStringLiteral("polish"));
+    }
+
+    void fileDialogsLeaveFocusModeFirst() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        Polish polish;
+        polish.setEnabled(false);
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        engine.rootContext()->setContextProperty(QStringLiteral("polish"), &polish);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        // Focus mode goes fullscreen; the portal's save dialog would open
+        // behind that. Asking to save must drop both first.
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "toggleFocus"));
+        QVERIFY(window->property("focusMode").toBool());
+        backend.save();
+        QVERIFY(!window->property("focusMode").toBool());
+        QVERIFY(!window->property("focusTransitioning").toBool());
+        QVERIFY(window->property("visibility").toInt() != 5 /* Window.FullScreen */);
+
+        // Plain F11 fullscreen is restored once the dialog is done.
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "toggleFullScreen"));
+        QTRY_COMPARE(window->property("visibility").toInt(), 5);
+        backend.openDialog();
+        QCOMPARE(window->property("visibility").toInt(), 2 /* Window.Windowed */);
+        QVERIFY(window->property("dialogRestoresFullScreen").toBool());
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "finishDialog"));
+        QCOMPARE(window->property("visibility").toInt(), 5);
+        QSettings().remove(QStringLiteral("polish"));
     }
 
     void findsInlineMarkdownRanges() {
@@ -298,8 +665,10 @@ private slots:
         QVERIFY(!mainQmlPath.isEmpty());
 
         Backend backend;
+        Polish polish;
         QQmlEngine engine;
         engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        engine.rootContext()->setContextProperty(QStringLiteral("polish"), &polish);
         QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
         QVERIFY2(component.isReady(), qPrintable(component.errorString()));
         QScopedPointer<QObject> window(component.create());
@@ -328,8 +697,10 @@ private slots:
         QVERIFY(!mainQmlPath.isEmpty());
 
         Backend backend;
+        Polish polish;
         QQmlEngine engine;
         engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        engine.rootContext()->setContextProperty(QStringLiteral("polish"), &polish);
         QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
         QVERIFY2(component.isReady(), qPrintable(component.errorString()));
         QScopedPointer<QObject> window(component.create());

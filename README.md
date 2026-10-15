@@ -24,11 +24,60 @@ two never interfere.
 - `Ctrl+Shift+F` toggles it by hand at any time.
 - `Ctrl+=` and `Ctrl+-` change the line's text size while in the mode, and the
   choice is remembered.
-- `Ctrl+S` keeps working the whole time.
+- `Ctrl+S` keeps working the whole time. If it needs the save dialog, focus
+  mode and fullscreen drop first so the portal's picker is not hidden behind
+  the blackout.
 
 The screen is always true black, whatever the system theme.
 
-Three settings live in `~/.config/Omacom/omafreewrite.conf` under `[focus]`:
+## Polish
+
+Freewriting with your eyes off the screen leaves typos everywhere. When Escape
+releases focus mode, Polish sends the words from that session to a language
+model and asks for exactly three things: spelling, capitalization and
+punctuation fixed, and the text broken into short paragraphs of one complete
+thought and at most two sentences.
+
+The words themselves are never changed. The prompt forbids rewording, adding,
+removing or reordering, and the reply is checked against what you wrote: if the
+word sequence drifts beyond spelling-level edits, the pass is discarded and the
+footer says so. The two-sentence cap and straight quotes are enforced in code
+after the model answers, so a small model does not need to be perfect.
+
+- It runs in the background after the fade, and the footer shows `Polishing…`
+  then `Polished`. Keep typing; if the span changed meanwhile, the result is
+  dropped rather than applied.
+- `Ctrl+Z` undoes a pass in one step.
+- `Shift+Escape` leaves focus mode without a pass.
+- The sparkle button in the footer (or `Ctrl+Shift+P`) opens the settings:
+  the server, the model, an optional API key, and the on/off switch.
+
+By default it talks to [Ollama](https://ollama.com) on this machine with
+`gemma3:4b`, so nothing leaves your computer:
+
+```sh
+sudo pacman -S ollama
+sudo systemctl enable --now ollama
+ollama pull gemma3:4b
+```
+
+Any OpenAI-compatible chat server works the same way (set the server to its
+base URL, such as `https://api.groq.com/openai/v1`, and add the key). For the
+Anthropic API use `https://api.anthropic.com`, a key, and a model such as
+`claude-haiku-5-5`. Settings live under `[polish]` in the config file:
+
+```ini
+[polish]
+enabled=true
+baseUrl=http://127.0.0.1:11434
+model=gemma3:4b
+apiKey=            ; stored in plain text; leave blank for Ollama
+```
+
+On a laptop CPU, a 4B model polishes a few hundred words in roughly twenty to
+thirty seconds. A cloud model does it in a couple of seconds.
+
+Three focus settings live in `~/.config/Omacom/omafreewrite.conf` under `[focus]`:
 
 ```ini
 [focus]
@@ -57,7 +106,8 @@ autoEnter=true    ; false leaves only the Ctrl+Shift+F toggle
 - `Ctrl+F` searches the document. Use `Enter` or `Ctrl+G` for the next match and `Shift+Enter` for the previous match.
 - `Ctrl+H` opens find and replace.
 - `Ctrl+B`, `Ctrl+I`, and `Ctrl+K` insert bold, italic, and link Markdown.
-- `Ctrl+Shift+F` toggles focus mode. `Escape` leaves it.
+- `Ctrl+Shift+F` toggles focus mode. `Escape` leaves it and runs Polish; `Shift+Escape` leaves it without.
+- `Ctrl+Shift+P` opens the Polish settings.
 - `Ctrl+?` shows the keyboard shortcut reference.
 
 Unsaved drafts are recovered after an abnormal exit. OmaFreewrite also watches open files
