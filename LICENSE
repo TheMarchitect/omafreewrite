@@ -1,6 +1,10 @@
 MIT License
 
-Copyright (c) 2026 David Heinemeier Hansson
+Copyright (c) 2026 Russell Lundstrom <russell@marketingplanformula.com>
+  https://marketingplanformula.com
+
+Portions copyright (c) 2026 David Heinemeier Hansson, from Omawrite
+(https://github.com/omacom-io/omawrite), which OmaFreewrite is forked from.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

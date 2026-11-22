@@ -1,12 +1,17 @@
-post_install() {
+refresh_caches() {
   gtk-update-icon-cache -q -t -f usr/share/icons/hicolor >/dev/null 2>&1 || true
   update-desktop-database -q >/dev/null 2>&1 || true
 }
 
+post_install() {
+  refresh_caches
+  echo "==> For Polish with local AI, run: omafreewrite-setup-polish"
+}
+
 post_upgrade() {
-  post_install
+  refresh_caches
 }
 
 post_remove() {
-  post_install
+  refresh_caches
 }

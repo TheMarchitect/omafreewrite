@@ -4,10 +4,13 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 PKGBUILD_DIR="$ROOT/pkgbuild"
 
-if ! command -v makepkg >/dev/null 2>&1; then
-  echo "makepkg is required to build and install the Arch package." >&2
+if ! command -v pacman >/dev/null 2>&1; then
+  echo "OmaFreewrite installs as an Arch package; pacman was not found." >&2
   exit 1
 fi
+
+# What building needs, before the first compile (a fresh system has no qmake6).
+sudo pacman -S --needed --noconfirm base-devel qt6-base qt6-declarative xdg-desktop-portal
 
 "$ROOT/bin/build"
 

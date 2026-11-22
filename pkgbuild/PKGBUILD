@@ -1,14 +1,18 @@
 # Maintainer: Russell Lundstrom <russell@marketingplanformula.com>
 
 pkgname=omafreewrite
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc='Focused Markdown writing app: the screen goes black down to one line while you write'
 arch=('x86_64')
 url='https://github.com/TheMarchitect/omafreewrite'
 license=('MIT')
+options=('!debug')
 install='omafreewrite.install'
 depends=('qt6-base' 'qt6-declarative' 'xdg-desktop-portal')
+optdepends=('ollama: local AI for Polish (run omafreewrite-setup-polish)'
+            'ollama-cuda: local AI for Polish on NVIDIA graphics'
+            'ollama-rocm: local AI for Polish on AMD graphics')
 makedepends=('gcc' 'make' 'qt6-base' 'qt6-declarative')
 source=()
 sha256sums=()
@@ -21,6 +25,7 @@ build() {
 package() {
   cd "$startdir/.."
   /usr/bin/install -Dm755 build/omafreewrite "$pkgdir/usr/bin/omafreewrite"
+  /usr/bin/install -Dm755 bin/setup-polish "$pkgdir/usr/bin/omafreewrite-setup-polish"
   /usr/bin/install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   /usr/bin/install -Dm644 fonts/OFL.txt "$pkgdir/usr/share/licenses/$pkgname/OFL.txt"
   /usr/bin/install -Dm644 "$startdir/omafreewrite.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/omafreewrite.svg"

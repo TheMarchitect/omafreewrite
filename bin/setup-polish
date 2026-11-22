@@ -1,0 +1,96 @@
+#!/usr/bin/env sh
+# Set up local AI for OmaFreewrite's Polish: install Ollama for your graphics
+# card, start it, download a model and point OmaFreewrite at it.
+#
+#   setup-polish            # gemma3:4b, fine on any machine (about 3 GB)
+#   setup-polish --large    # gemma3:12b, better, wants a GPU with 12 GB+ (about 8 GB)
+#   setup-polish --model X  # any Ollama model you prefer
+#
+# Installed by the package as `omafreewrite-setup-polish`.
+set -eu
+
+BASE_MODEL="gemma3:4b"
+POLISH_MODEL="omafreewrite-polish"
+CONTEXT=16384
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/Omacom/omafreewrite.conf"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --large) BASE_MODEL="gemma3:12b" ;;
+    --model) shift; BASE_MODEL="${1:?--model needs a name}" ;;
+    -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "Unknown option: $1 (try --help)" >&2; exit 1 ;;
+  esac
+  shift
+done
+
+say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+
+# 1. Ollama, in the build that matches the graphics card.
+if lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -qi nvidia; then
+  PKG=ollama-cuda
+elif lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -qiE 'amd|ati|radeon'; then
+  PKG=ollama-rocm
+else
+  PKG=ollama
+fi
+
+if pacman -Q ollama >/dev/null 2>&1 && { [ "$PKG" = ollama ] || pacman -Q "$PKG" >/dev/null 2>&1; }; then
+  say "Ollama is already installed"
+else
+  say "Installing $PKG (asks for your password)"
+  sudo pacman -S --needed --noconfirm ollama "$PKG"
+fi
+
+# 2. The service, so it starts at boot and keeps its models in one place.
+if ! systemctl is-active --quiet ollama; then
+  say "Starting the Ollama service"
+  sudo systemctl enable --now ollama
+fi
+
+printf 'Waiting for Ollama'
+i=0
+until curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; do
+  i=$((i + 1))
+  [ "$i" -gt 30 ] && { echo; echo "Ollama did not answer on 127.0.0.1:11434. Check: systemctl status ollama" >&2; exit 1; }
+  printf '.'; sleep 1
+done
+echo
+
+# 3. The model, plus a copy with a long context window. Ollama's default
+#    window is short, which cuts off long freewriting sessions mid-Polish.
+say "Downloading $BASE_MODEL (this is the slow part)"
+ollama pull "$BASE_MODEL"
+
+say "Creating $POLISH_MODEL ($BASE_MODEL with a ${CONTEXT}-token window)"
+MODELFILE="$(mktemp)"
+trap 'rm -f "$MODELFILE"' EXIT
+printf 'FROM %s\nPARAMETER num_ctx %s\n' "$BASE_MODEL" "$CONTEXT" > "$MODELFILE"
+ollama create "$POLISH_MODEL" -f "$MODELFILE" >/dev/null
+
+# 4. Point OmaFreewrite at it.
+if pgrep -x omafreewrite >/dev/null 2>&1; then
+  echo
+  echo "OmaFreewrite is open, so its settings were left alone. Either close it and"
+  echo "run this again, or pick \"$POLISH_MODEL\" in the Polish settings (Ctrl+Shift+P)."
+else
+  mkdir -p "$(dirname "$CONFIG")"
+  touch "$CONFIG"
+  awk -v model="$POLISH_MODEL" '
+    /^\[/ { if (inpolish && !done) { print "model=" model; done = 1 } inpolish = ($0 == "[polish]") }
+    inpolish && /^(model|baseUrl|enabled)=/ { next }
+    { print }
+    END {
+      if (!seen && !done) { print ""; print "[polish]" }
+      if (!done) { print "model=" model }
+    }
+    $0 == "[polish]" { seen = 1 }
+  ' "$CONFIG" > "$CONFIG.tmp"
+  mv "$CONFIG.tmp" "$CONFIG"
+  # enabled and baseUrl go back to their defaults (on, this machine).
+  say "OmaFreewrite will use $POLISH_MODEL"
+fi
+
+say "Done"
+echo "Test it: open OmaFreewrite, write past the blackout, press Escape."
+echo "The footer shows \"Polishing…\" and then \"Polished\"."

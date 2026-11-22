@@ -19,12 +19,17 @@ This guide covers everything in the app. The short version:
 ## 1. Installing and launching
 
 OmaFreewrite installs on Omarchy (Arch Linux) as a package and sits beside the
-original Omawrite without sharing any settings.
+original Omawrite without sharing any settings. Download the package ending in
+`x86_64.pkg.tar.zst` from the
+[newest release](https://github.com/TheMarchitect/omafreewrite/releases/latest)
+and install it:
 
 ```sh
-cd ~/omafreewrite
-./bin/install          # builds the package and installs it (asks for sudo)
+sudo pacman -U ~/Downloads/omafreewrite-*.pkg.tar.zst
 ```
+
+The [README](README.md#install) has a one-line version, and
+[BUILDING.md](BUILDING.md) covers building from source.
 
 Launch it from the app launcher as **OmaFreewrite**, or from a terminal:
 
@@ -33,16 +38,17 @@ omafreewrite                 # a blank document
 omafreewrite notes.md        # open a file
 ```
 
-For Polish to work out of the box you also need Ollama, the local model runner,
-and one model. This is a one-time setup:
+For Polish to work on your own computer you also need Ollama, the local model
+runner, and one model. One command does all of it (installs Ollama for your
+graphics card, starts it, downloads the model and selects it in the app):
 
 ```sh
-sudo pacman -S ollama
-sudo systemctl enable --now ollama
-ollama pull gemma3:4b
+omafreewrite-setup-polish            # gemma3:4b, any machine
+omafreewrite-setup-polish --large    # gemma3:12b, for a 12 GB+ graphics card
 ```
 
-Polish also works with cloud models if you prefer. See section 4.
+Close OmaFreewrite first so it can save the setting. Polish also works with
+cloud models if you prefer. See section 4.
 
 ## 2. Writing
 
@@ -150,8 +156,11 @@ in plain text there, so treat the file accordingly.
 ### Choosing a model
 
 **Local (default).** Ollama runs on your machine. Nothing you write leaves the
-computer, and there is no cost. The default model `gemma3:4b` is the most
-careful about leaving words alone. To try a faster one:
+computer, and there is no cost. `omafreewrite-setup-polish` creates a model
+called `omafreewrite-polish`: Gemma 3 with a long context window, so a long
+session is never cut off part-way. (Plain `gemma3:4b` works too, but Ollama's
+default window is short enough to truncate a long freewrite.) Gemma 3 is the
+most careful about leaving words alone. To try a faster one:
 
 ```sh
 ollama pull llama3.2:3b
@@ -219,12 +228,16 @@ it permanently with `sudo systemctl enable --now ollama`. If you started
 `ollama serve` by hand in a terminal, that copy stops when the terminal
 closes and keeps its models in a different place; use the service instead.
 
-**The footer says `Polish failed: model not found` or similar.** The model
-named in the settings is not pulled. Run `ollama pull gemma3:4b` (or whichever
-you chose), then press `Refresh` in the Polish settings.
+**The footer says `Polish failed: model "…" not found` or similar.** The model
+named in the settings is not downloaded. Run `omafreewrite-setup-polish` (or
+`ollama pull` whichever you chose), then press `Refresh` in the Polish settings.
+
+**The footer says `Polish failed: the server did not answer with JSON`.** Most
+often a "thinking" model such as Gemma 4 or DeepSeek R1: it reasons for minutes
+before answering and the request times out. Switch to `omafreewrite-polish`.
 
 **The footer says `Polish failed: the model changed the words`.** The guard
-did its job. Nothing was altered. Try again, or switch to `gemma3:4b` if you
+did its job. Nothing was altered. Try again, or switch to `omafreewrite-polish` if you
 were testing a smaller model.
 
 **Polish is slow.** On a laptop processor that is normal for a local model.
@@ -237,7 +250,7 @@ skipped on purpose.
 
 **The app looked frozen after `Ctrl+S`.** This was a bug in versions before
 0.2.0: the save dialog opened behind the fullscreen blackout. It is fixed. If
-you are on an older build, run `./bin/install` again.
+you are on an older build, install the newest release.
 
 **I want Polish to do more, like fix grammar or tighten sentences.** It will
 not, by design. The whole point is that what you said stays what you said.
@@ -250,4 +263,4 @@ Edit by hand afterwards, with the page in front of you.
 | Settings | `~/.config/Omacom/omafreewrite.conf` |
 | Draft recovery | `~/.local/share/Omacom/omafreewrite/` |
 | Ollama models | `/var/lib/ollama` (owned by the service) |
-| Source | `~/omafreewrite` |
+| Polish setup script | `/usr/bin/omafreewrite-setup-polish` |
