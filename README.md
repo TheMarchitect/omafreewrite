@@ -2,7 +2,7 @@
 
 A focused Markdown writing app for [Omarchy](https://omarchy.org). Write a while
 and the whole screen fades to black except one small line of what you just typed,
-in the spirit of the Freewrite Alpha: no page to re-read, no cursor to wander,
+in the spirit of the [Freewrite Alpha](https://getfreewrite.com/products/alpha): no page to re-read, no cursor to wander,
 nothing to fix. Press Escape and the page fades back, and **Polish**, an optional
 AI pass, quietly fixes your spelling and breaks the text into short paragraphs
 without changing a single word. It runs on your own computer by default, so
@@ -14,6 +14,29 @@ nothing you write leaves it.
 [Omawrite](https://github.com/omacom-io/omawrite) and installs beside it with its
 own settings, so the two never interfere. Please
 [report what you find](https://github.com/TheMarchitect/omafreewrite/issues).
+
+## Inspired by the Freewrite Alpha
+
+OmaFreewrite exists because of the
+[**Freewrite Alpha**](https://getfreewrite.com/products/alpha), and it is only a
+small software echo of it. The Alpha is a wonderful little machine: a dedicated
+drafting device with a full-size mechanical keyboard and a small screen that
+shows just a few lines of text. There is no browser, no email and no
+notifications to pull you away, and no page of old writing to fiddle with. It
+does one thing, getting a first draft out of your head, and it does it
+beautifully. When you are done, your drafts sync to the cloud for editing in
+whatever you like.
+
+Focus mode here borrows that idea for the desktop, but nothing beats a device
+built for it. If OmaFreewrite helps you write, **go get the real thing**. It
+weighs 1.6 lb, turns on instantly, and runs about four weeks on a charge at
+half an hour a day. It is the best way we know to write without editing
+yourself.
+
+👉 [Get the Freewrite Alpha at getfreewrite.com](https://getfreewrite.com/products/alpha)
+
+OmaFreewrite is an independent project and is not affiliated with or endorsed
+by Freewrite (Astrohaus). "Freewrite" is their trademark.
 
 ## Install
 
